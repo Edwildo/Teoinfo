@@ -28,7 +28,7 @@ print("=" * 70)
 # Configuración de ALTA PRECISIÓN para máxima exactitud
 IMAGEN = "data/corazon.png"
 SAMPLES = 2048  # Muchas más muestras para mejor precisión
-TAU = 1.0  # Tau = 1.0 (TODAS las frecuencias) para MÁXIMA PRECISIÓN
+TAU = 0.999  # Tau muy alto (casi todas las frecuencias) para máxima precisión
 N_TIME = 1500  # Más puntos para reconstrucción más precisa
 THRESHOLD = 128
 ANIM_FRAMES = 300  # Más frames para animación más suave
@@ -37,7 +37,7 @@ ANIM_FPS = 20  # FPS para animación fluida
 print(f"\n📷 Imagen: {IMAGEN}")
 print(f"⚙️  Configuración de ALTA PRECISIÓN:")
 print(f"   • Muestras: {SAMPLES} (máxima resolución)")
-print(f"   • Tau: {TAU} (MÁXIMA PRECISIÓN - TODAS las frecuencias)")
+print(f"   • Tau: {TAU} (máxima precisión - casi todas las frecuencias)")
 print(f"   • Puntos de tiempo: {N_TIME} (reconstrucción detallada)")
 
 # 1. Cargar contorno
@@ -65,7 +65,7 @@ print(f"   ✓ Coeficientes: {len(coeffs)} frecuencias")
 print(f"\n4️⃣  Seleccionando frecuencias (tau={TAU}) para MÁXIMA PRECISIÓN...")
 k_selected = select_k_by_energy(coeffs, tau=TAU)
 print(f"   ✓ K seleccionado: {k_selected} frecuencias")
-print(f"   ℹ️  Usando TODAS las frecuencias disponibles para reconstrucción EXACTA")
+print(f"   ℹ️  Usando casi todas las frecuencias para reconstrucción exacta")
 
 # 5. Reconstruir
 print(f"\n5️⃣  Reconstruyendo contorno...")
@@ -106,7 +106,7 @@ try:
         save_path="corazon_epiciclos.gif",
         fps=ANIM_FPS,  # FPS más bajo
     )
-    print(f"   ✓ Animación guardada: corazon_epiciclos.gif")
+    print(f"   ✓ Animación guardada: logo_epiciclos.gif")
     print(f"   ✓ {ANIM_FRAMES} frames a {ANIM_FPS} fps (rápido y eficiente)")
 except Exception as e:
     print(f"   ⚠️  Error al guardar: {e}")

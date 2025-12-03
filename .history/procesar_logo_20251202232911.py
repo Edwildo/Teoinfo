@@ -65,7 +65,7 @@ print(f"   ✓ Coeficientes: {len(coeffs)} frecuencias")
 print(f"\n4️⃣  Seleccionando frecuencias (tau={TAU}) para MÁXIMA PRECISIÓN...")
 k_selected = select_k_by_energy(coeffs, tau=TAU)
 print(f"   ✓ K seleccionado: {k_selected} frecuencias")
-print(f"   ℹ️  Usando TODAS las frecuencias disponibles para reconstrucción EXACTA")
+print(f"   ℹ️  Usando casi todas las frecuencias para reconstrucción exacta")
 
 # 5. Reconstruir
 print(f"\n5️⃣  Reconstruyendo contorno...")

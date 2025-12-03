@@ -124,11 +124,6 @@ def animate_epicycles(
 
     # Ordenar por magnitud (de mayor a menor)
     freq_list.sort(key=lambda x: np.abs(x[1]), reverse=True)
-    
-    # Optimización: limitar número de epiciclos visibles para velocidad
-    # Mostrar solo los más importantes (los que tienen más energía)
-    max_visible_epicycles = min(len(freq_list), 20)  # Máximo 20 epiciclos visibles
-    freq_list = freq_list[:max_visible_epicycles]
 
     # Crear figura y ejes
     fig, ax = plt.subplots(figsize=figsize)
@@ -166,7 +161,9 @@ def animate_epicycles(
     ax.set_xlim(center_x - max_range / 2 - margin, center_x + max_range / 2 + margin)
     ax.set_ylim(center_y - max_range / 2 - margin, center_y + max_range / 2 + margin)
 
-    # Elementos de la animación (solo trazado, sin epiciclos)
+    # Elementos de la animación
+    lines = []
+    circles = []
     trace_line = None
     current_point = None
 
@@ -175,18 +172,18 @@ def animate_epicycles(
         nonlocal trace_line, current_point
 
         # Línea de trazado (contorno reconstruido)
-        trace_line, = ax.plot([], [], "r-", linewidth=2.5, alpha=0.8, label="Trazado")
+        trace_line, = ax.plot([], [], "r-", linewidth=2, alpha=0.5, label="Trazado")
 
-        # Punto actual (más visible)
-        current_point, = ax.plot([], [], "ro", markersize=10, label="Punto actual", zorder=10)
+        # Punto actual
+        current_point, = ax.plot([], [], "ro", markersize=8, label="Punto actual")
 
-        # Contorno completo de referencia (fondo, opcional)
+        # Contorno completo (fondo)
         ax.plot(
             np.real(z_reconstructed),
             np.imag(z_reconstructed),
             "b--",
             linewidth=1,
-            alpha=0.2,
+            alpha=0.3,
             label="Contorno completo",
         )
 
@@ -195,10 +192,60 @@ def animate_epicycles(
         return [trace_line, current_point]
 
     def animate(frame):
-        """Actualiza la animación en cada frame (solo trazado, sin epiciclos)."""
-        # Calcular posición usando la reconstrucción pre-calculada
-        # Esto es mucho más rápido que calcular todos los epiciclos
-        current_pos = z_reconstructed[frame]
+        """Actualiza la animación en cada frame."""
+        t = t_values[frame]
+
+        # Calcular posición acumulada de cada epiciclo
+        current_pos = 0.0 + 0.0j
+
+        # Limpiar círculos y líneas anteriores (optimizado)
+        # Remover en batch para mejor rendimiento
+        while lines:
+            lines.pop().remove()
+        while circles:
+            circles.pop().remove()
+
+        # Dibujar cada epiciclo
+        for k, c_k in freq_list:
+            # Radio y fase del epiciclo
+            radius = np.abs(c_k)
+            phase = np.angle(c_k)
+
+            if radius < 1e-10:
+                continue  # Saltar epiciclos muy pequeños
+
+            # Posición del centro del epiciclo (posición acumulada anterior)
+            center = current_pos
+
+            # Posición del punto en el epiciclo
+            angle = 2 * np.pi * k * t + phase
+            point_on_circle = center + radius * np.exp(1j * angle)
+
+            # Dibujar círculo
+            circle = plt.Circle(
+                (np.real(center), np.imag(center)),
+                radius,
+                fill=False,
+                color="gray",
+                linestyle="--",
+                linewidth=1,
+                alpha=0.5,
+            )
+            ax.add_patch(circle)
+            circles.append(circle)
+
+            # Dibujar línea desde el centro hasta el punto
+            line, = ax.plot(
+                [np.real(center), np.real(point_on_circle)],
+                [np.imag(center), np.imag(point_on_circle)],
+                "g-",
+                linewidth=1.5,
+                alpha=0.7,
+            )
+            lines.append(line)
+
+            # Actualizar posición acumulada
+            current_pos = point_on_circle
 
         # Actualizar trazado hasta el punto actual
         z_trace = z_reconstructed[: frame + 1]
@@ -207,7 +254,7 @@ def animate_epicycles(
         # Actualizar punto actual
         current_point.set_data([np.real(current_pos)], [np.imag(current_pos)])
 
-        return [trace_line, current_point]
+        return [trace_line, current_point] + lines + circles
 
     # Crear animación
     anim = animation.FuncAnimation(
@@ -220,13 +267,12 @@ def animate_epicycles(
         repeat=True,
     )
 
-    # Guardar animación si se especifica (optimizado)
+    # Guardar animación si se especifica
     if save_path is not None:
         if save_path.endswith(".mp4"):
             writer = animation.FFMpegWriter(fps=fps)
             anim.save(save_path, writer=writer)
         elif save_path.endswith(".gif"):
-            # Guardar GIF con pillow (más rápido)
             anim.save(save_path, writer="pillow", fps=fps)
         else:
             raise ValueError("save_path debe terminar en .mp4 o .gif")
