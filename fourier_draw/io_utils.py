@@ -105,13 +105,13 @@ def save_contour_to_txt(contour: Contour, path: Union[str, Path]) -> None:
 def load_contour_from_image(
     path: Union[str, Path],
     threshold: int = 128,
-    method: str = "largest",
+    method: str = "all",
     invert: bool = False,
-) -> Contour:
+) -> List[Contour]:
     """
-    Carga un contorno desde una imagen.
+    Carga contornos desde una imagen.
 
-    Extrae el contorno de una imagen convirtiéndola a escala de grises,
+    Extrae todos los contornos de una imagen convirtiéndola a escala de grises,
     aplicando un umbral y detectando los bordes.
 
     Parameters
@@ -122,25 +122,25 @@ def load_contour_from_image(
         Umbral para binarización (0-255). Valores por debajo se consideran
         fondo, valores por encima objeto.
     method : str
-        Método para seleccionar contorno:
-        - "largest": Usa el contorno más grande (default)
-        - "outer": Usa el contorno externo
-        - "all": Retorna el primer contorno encontrado
+        Método para filtrar contornos:
+        - "all": Retorna todos los contornos encontrados (default)
+        - "largest": Retorna solo el contorno más grande
+        - "outer": Retorna solo los contornos externos
     invert : bool
         Si True, invierte la imagen antes de procesar (útil para imágenes
         con fondo oscuro).
 
     Returns
     -------
-    Contour
-        Contorno extraído de la imagen.
+    List[Contour]
+        Lista de contornos extraídos de la imagen.
 
     Raises
     ------
     FileNotFoundError
         Si el archivo no existe.
     ValueError
-        Si no se puede extraer un contorno de la imagen.
+        Si no se puede extraer contornos de la imagen.
     """
     path = Path(path)
 
@@ -148,42 +148,158 @@ def load_contour_from_image(
         raise FileNotFoundError(f"El archivo no existe: {path}")
 
     try:
-        # Cargar imagen
-        img = Image.open(path)
+        import cv2
 
-        # Convertir a escala de grises si es necesario
-        if img.mode != "L":
-            img = img.convert("L")
-
-        # Convertir a array numpy
-        img_array = np.array(img, dtype=np.uint8)
+        # Load image
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        
+        if img is None:
+            raise ValueError(f"No se pudo cargar la imagen: {path}")
 
         # Invertir si es necesario
         if invert:
-            img_array = 255 - img_array
+            img = 255 - img
 
-        # Aplicar umbral para binarizar
-        binary = img_array > threshold
+        # Detect edges
+        edges = cv2.Canny(img, 100, 200)
 
-        # Extraer contorno usando marching squares o método simple
-        contour_points = _extract_contour_from_binary(binary, method)
+        # Extract contours as connected sequences
+        contours, hierarchy = cv2.findContours(
+            edges,
+            cv2.RETR_EXTERNAL,      # Only outer borders; use RETR_LIST if you want all
+            cv2.CHAIN_APPROX_NONE   # No compression → every border pixel is included
+        )
 
-        if len(contour_points) == 0:
+        if not contours:
             raise ValueError(
-                f"No se pudo extraer un contorno de la imagen. "
+                f"No se encontraron contornos en la imagen. "
                 f"Intenta ajustar el umbral (threshold={threshold}) o invertir (invert={invert})"
             )
 
-        # Convertir a Contour
-        x = contour_points[:, 0]
-        y = contour_points[:, 1]
-
-        return Contour(x, y)
+        # Procesar contornos según el método especificado
+        processed_contours = []
+        
+        if method == "largest":
+            # Seleccionar solo el contorno más grande
+            largest_contour = max(contours, key=cv2.contourArea)
+            contours = [largest_contour]
+        elif method == "outer":
+            # Ya están filtrados con RETR_EXTERNAL
+            pass
+        # else: "all" - usar todos los contornos
+        
+        # Flip y axis and convert each contour to Contour object
+        H = img.shape[0]
+        
+        for c in contours:
+            pts = c.reshape(-1, 2).astype(np.float64)  # convert from Nx1x2 to Nx2 format (x, y)
+            
+            # Flip y axis so plt can plot correctly
+            pts[:, 1] = H - pts[:, 1]
+            
+            # Create Contour object
+            x = pts[:, 0]
+            y = pts[:, 1]
+            processed_contours.append(Contour(x, y))
+        
+        return processed_contours
 
     except Exception as e:
         if isinstance(e, (FileNotFoundError, ValueError)):
             raise
         raise ValueError(f"Error al procesar la imagen {path}: {e}")
+
+import numpy as np
+
+def connect_and_resample(contours, n_points=2000, close_loop=True):
+    """
+    Connect all contour point sequences optimally into one path
+    and resample uniformly to n_points.
+    
+    contours: list of (N_i, 2) numpy arrays
+    n_points: number of output samples
+    close_loop: close the final path (for Fourier drawing)
+    """
+    
+    # Prepare contour info (start, end, pts)
+    info = []
+    for c in contours:
+        pts = c.reshape(-1, 2)
+        info.append({
+            "pts": pts,
+            "start": pts[0],
+            "end": pts[-1]
+        })
+    
+    # Helper distance function
+    def dist(a, b):
+        return np.linalg.norm(a - b)
+    
+    # ---- STEP 1: Start with largest contour (better stability)
+    remaining = list(range(len(info)))
+    lengths = [len(info[i]["pts"]) for i in remaining]
+    current_idx = remaining.pop()
+    
+    path = info[current_idx]["pts"].copy()
+    last_point = path[-1]
+    
+    # ---- STEP 2: Greedy TSP-like chaining
+    while remaining:
+        best_idx = None
+        best_reverse = False
+        best_cost = float('inf')
+        
+        for i in remaining:
+            c = info[i]
+            
+            d_start = dist(last_point, c["start"])
+            d_end   = dist(last_point, c["end"])
+            
+            if d_start < best_cost:
+                best_cost = d_start
+                best_idx = i
+                best_reverse = False
+            
+            if d_end < best_cost:
+                best_cost = d_end
+                best_idx = i
+                best_reverse = True
+        
+        # Remove from remaining
+        remaining.remove(best_idx)
+        
+        # Fetch contour
+        next_pts = info[best_idx]["pts"]
+        
+        # Reverse if needed
+        if best_reverse:
+            next_pts = next_pts[::-1]
+        
+        # Append
+        path = np.vstack((path, next_pts))
+        
+        # Update end
+        last_point = path[-1]
+    
+    # ---- STEP 3: Close the loop if required
+    if close_loop:
+        path = np.vstack([path, path[0]])
+    
+    # ---- STEP 4: Resample to uniform spacing
+    # Compute cumulative distance
+    diffs = np.diff(path, axis=0)
+    seg_lengths = np.sqrt((diffs**2).sum(axis=1))
+    cumlen = np.concatenate([[0], np.cumsum(seg_lengths)])
+    total_len = cumlen[-1]
+    
+    # Even distance spacing
+    new_t = np.linspace(0, total_len, n_points)
+    
+    # Interpolate x and y separately
+    new_x = np.interp(new_t, cumlen, path[:,0])
+    new_y = np.interp(new_t, cumlen, path[:,1])
+    
+    return np.column_stack((new_x, new_y))
 
 
 def _extract_contour_from_binary(
@@ -315,7 +431,7 @@ def _order_contour_points(points: np.ndarray, start_idx: int) -> np.ndarray:
     return np.array(ordered, dtype=np.float64)
 
 
-def load_contour_auto(path: Union[str, Path], **kwargs) -> Contour:
+def load_contour_auto(path: Union[str, Path], **kwargs) -> Union[Contour, List[Contour]]:
     """
     Carga un contorno automáticamente detectando si es imagen o archivo de texto.
 
@@ -328,8 +444,8 @@ def load_contour_auto(path: Union[str, Path], **kwargs) -> Contour:
 
     Returns
     -------
-    Contour
-        Contorno cargado.
+    Union[Contour, List[Contour]]
+        Un Contour si es archivo de texto, o una lista de Contours si es imagen.
 
     Raises
     ------

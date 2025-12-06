@@ -32,7 +32,8 @@ ENV/
 *.swp
 *.swo
 *~
-
+#RES
+contornos/*.png
 # Testing
 .pytest_cache/
 .coverage

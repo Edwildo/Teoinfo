@@ -61,7 +61,7 @@ def plot_static_contours(
 
 
 def animate_epicycles(
-    coeffs: np.ndarray,
+    coeffs,
     k_max: int,
     n_time: int = 1000,
     save_path: Optional[str] = None,
@@ -76,8 +76,10 @@ def animate_epicycles(
 
     Parameters
     ----------
-    coeffs : np.ndarray
-        Coeficientes de Fourier de forma (N,).
+    coeffs : np.ndarray or list of np.ndarray
+        Coeficientes de Fourier. Puede ser:
+        - Un único array 1D de forma (N,) para una sola curva.
+        - Una lista de arrays 1D para múltiples curvas que se animarán juntas.
     k_max : int
         Número máximo de frecuencias a usar en la reconstrucción.
     n_time : int
@@ -95,40 +97,53 @@ def animate_epicycles(
     matplotlib.animation.FuncAnimation
         Objeto de animación.
     """
-    coeffs = np.asarray(coeffs)
-    N = len(coeffs)
+    # Convertir a lista si es un array simple
+    if isinstance(coeffs, np.ndarray):
+        coeffs_list = [coeffs]
+    elif isinstance(coeffs, list):
+        coeffs_list = [np.asarray(c) for c in coeffs]
+    else:
+        raise TypeError("coeffs debe ser un array 1D o una lista de arrays 1D")
+    
+    if not coeffs_list:
+        raise ValueError("coeffs no puede estar vacío")
+    
+    N = len(coeffs_list[0])
 
     if k_max < 0:
         raise ValueError("k_max debe ser no negativo")
 
     k_max = min(k_max, N // 2)
 
-    # Ordenar frecuencias por magnitud de coeficiente (de mayor a menor)
-    # para que los epiciclos grandes se dibujen primero
-    freq_list = []
+    # Procesar cada conjunto de coeficientes
+    freq_lists = []
+    for coeffs in coeffs_list:
+        freq_list = []
 
-    # Añadir componente DC (k=0)
-    if k_max >= 0:
-        freq_list.append((0, coeffs[0]))
+        # Añadir componente DC (k=0)
+        if k_max >= 0:
+            freq_list.append((0, coeffs[0]))
 
-    # Añadir frecuencias positivas (k=1 a k=k_max)
-    for k in range(1, k_max + 1):
-        if k < N:
-            freq_list.append((k, coeffs[k]))
+        # Añadir frecuencias positivas (k=1 a k=k_max)
+        for k in range(1, k_max + 1):
+            if k < N:
+                freq_list.append((k, coeffs[k]))
 
-    # Añadir frecuencias negativas (k=-k_max a k=-1)
-    for k in range(1, k_max + 1):
-        idx = N - k
-        if idx < N:
-            freq_list.append((-k, coeffs[idx]))
+        # Añadir frecuencias negativas (k=-k_max a k=-1)
+        for k in range(1, k_max + 1):
+            idx = N - k
+            if idx < N:
+                freq_list.append((-k, coeffs[idx]))
 
-    # Ordenar por magnitud (de mayor a menor)
-    freq_list.sort(key=lambda x: np.abs(x[1]), reverse=True)
-    
-    # Optimización: limitar número de epiciclos visibles para velocidad
-    # Mostrar solo los más importantes (los que tienen más energía)
-    max_visible_epicycles = min(len(freq_list), 20)  # Máximo 20 epiciclos visibles
-    freq_list = freq_list[:max_visible_epicycles]
+        # Ordenar por magnitud (de mayor a menor)
+        freq_list.sort(key=lambda x: np.abs(x[1]), reverse=True)
+        
+        # Optimización: limitar número de epiciclos visibles para velocidad
+        # Mostrar solo los más importantes (los que tienen más energía)
+        max_visible_epicycles = min(len(freq_list), 20)  # Máximo 20 epiciclos visibles
+        freq_list = freq_list[:max_visible_epicycles]
+        
+        freq_lists.append(freq_list)
 
     # Crear figura y ejes
     fig, ax = plt.subplots(figsize=figsize)
@@ -143,20 +158,26 @@ def animate_epicycles(
     # Puntos de tiempo
     t_values = np.linspace(0, 1, n_time, endpoint=False)
 
-    # Pre-calcular posiciones del contorno reconstruido (optimizado)
-    z_reconstructed = np.zeros(n_time, dtype=complex)
-    # Pre-calcular exponenciales para todas las frecuencias
-    for k, c_k in freq_list:
-        if k == 0:
-            z_reconstructed += c_k
-        else:
-            # Vectorizar el cálculo
-            z_reconstructed += c_k * np.exp(2j * np.pi * k * t_values)
+    # Pre-calcular posiciones del contorno reconstruido para cada curva
+    z_reconstructed_list = []
+    for coeffs, freq_list in zip(coeffs_list, freq_lists):
+        z_reconstructed = np.zeros(n_time, dtype=complex)
+        # Pre-calcular exponenciales para todas las frecuencias
+        for k, c_k in freq_list:
+            if k == 0:
+                z_reconstructed += c_k
+            else:
+                # Vectorizar el cálculo
+                z_reconstructed += c_k * np.exp(2j * np.pi * k * t_values)
+        z_reconstructed_list.append(z_reconstructed)
 
-    # Ajustar límites de los ejes basándose en el contorno
+    # Combinar todos los contornos reconstruidos para ajustar límites
+    z_all = np.concatenate(z_reconstructed_list)
+
+    # Ajustar límites de los ejes basándose en los contornos
     margin = 0.1
-    x_min, x_max = np.real(z_reconstructed).min(), np.real(z_reconstructed).max()
-    y_min, y_max = np.imag(z_reconstructed).min(), np.imag(z_reconstructed).max()
+    x_min, x_max = np.real(z_all).min(), np.real(z_all).max()
+    y_min, y_max = np.imag(z_all).min(), np.imag(z_all).max()
     x_range = x_max - x_min
     y_range = y_max - y_min
     max_range = max(x_range, y_range)
@@ -167,47 +188,62 @@ def animate_epicycles(
     ax.set_ylim(center_y - max_range / 2 - margin, center_y + max_range / 2 + margin)
 
     # Elementos de la animación (solo trazado, sin epiciclos)
-    trace_line = None
-    current_point = None
+    trace_lines = []
+    current_points = []
+    
+    # Colores para cada curva
+    colors = plt.cm.tab10(np.linspace(0, 1, len(coeffs_list)))
 
     def init():
         """Inicializa la animación."""
-        nonlocal trace_line, current_point
+        # Crear líneas y puntos para cada curva
+        for i, (z_reconstructed, color) in enumerate(zip(z_reconstructed_list, colors)):
+            # Línea de trazado
+            trace_line, = ax.plot([], [], color=color, linewidth=2.5, alpha=0.8, 
+                                  #label=f"Trazado {i+1}" if len(coeffs_list) > 1 else "Trazado"
+                                  )
+            trace_lines.append(trace_line)
 
-        # Línea de trazado (contorno reconstruido)
-        trace_line, = ax.plot([], [], "r-", linewidth=2.5, alpha=0.8, label="Trazado")
+            # Punto actual
+            current_point, = ax.plot([], [], "o", color=color, markersize=10, 
+                                    #label=f"Punto actual {i+1}" if len(coeffs_list) > 1 else "Punto actual", 
+                                    zorder=10)
+            current_points.append(current_point)
 
-        # Punto actual (más visible)
-        current_point, = ax.plot([], [], "ro", markersize=10, label="Punto actual", zorder=10)
+            # Contorno completo de referencia (fondo, opcional)
+            ax.plot(
+                np.real(z_reconstructed),
+                np.imag(z_reconstructed),
+                "--",
+                color=color,
+                linewidth=1,
+                alpha=0.2,
+                #label=f"Contorno completo {i+1}" if len(coeffs_list) > 1 else "Contorno completo",
+            )
 
-        # Contorno completo de referencia (fondo, opcional)
-        ax.plot(
-            np.real(z_reconstructed),
-            np.imag(z_reconstructed),
-            "b--",
-            linewidth=1,
-            alpha=0.2,
-            label="Contorno completo",
-        )
-
-        ax.legend(loc="upper right")
-
-        return [trace_line, current_point]
+        #ax.legend(loc="upper right")
+        return trace_lines + current_points
 
     def animate(frame):
-        """Actualiza la animación en cada frame (solo trazado, sin epiciclos)."""
-        # Calcular posición usando la reconstrucción pre-calculada
-        # Esto es mucho más rápido que calcular todos los epiciclos
-        current_pos = z_reconstructed[frame]
+        """Actualiza la animación en cada frame."""
+        result = []
+        
+        for i, (z_reconstructed, trace_line, current_point) in enumerate(
+            zip(z_reconstructed_list, trace_lines, current_points)
+        ):
+            # Calcular posición usando la reconstrucción pre-calculada
+            current_pos = z_reconstructed[frame]
 
-        # Actualizar trazado hasta el punto actual
-        z_trace = z_reconstructed[: frame + 1]
-        trace_line.set_data(np.real(z_trace), np.imag(z_trace))
+            # Actualizar trazado hasta el punto actual
+            z_trace = z_reconstructed[: frame + 1]
+            trace_line.set_data(np.real(z_trace), np.imag(z_trace))
 
-        # Actualizar punto actual
-        current_point.set_data([np.real(current_pos)], [np.imag(current_pos)])
+            # Actualizar punto actual
+            current_point.set_data([np.real(current_pos)], [np.imag(current_pos)])
+            
+            result.extend([trace_line, current_point])
 
-        return [trace_line, current_point]
+        return result
 
     # Crear animación
     anim = animation.FuncAnimation(
